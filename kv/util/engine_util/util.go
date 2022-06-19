@@ -8,7 +8,7 @@ import (
 )
 
 func KeyWithCF(cf string, key []byte) []byte {
-	return append([]byte(cf+"_"), key...)
+	return append(append([]byte(cf), byte('_')), key...)
 }
 
 func GetCF(db *badger.DB, cf string, key []byte) (val []byte, err error) {
