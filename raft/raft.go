@@ -164,47 +164,115 @@ func newRaft(c *Config) *Raft {
 	if err := c.validate(); err != nil {
 		panic(err.Error())
 	}
+	raft := &Raft{
+		id:               c.ID,
+		RaftLog:          newLog(c.Storage),
+		Prs:              make(map[uint64]*Progress, len(c.peers)),
+		votes:            make(map[uint64]bool, len(c.peers)),
+		State:            StateFollower,
+		msgs:             make([]pb.Message, 0, 2),
+		Lead:             None,
+		heartbeatTimeout: c.HeartbeatTick,
+		electionTimeout:  c.ElectionTick,
+		heartbeatElapsed: 0,
+		electionElapsed:  0,
+		leadTransferee:   0,
+		PendingConfIndex: None,
+	}
+	for _, peer := range c.peers {
+		raft.Prs[peer] = new(Progress)
+		raft.votes[peer] = false
+	}
 	// Your Code Here (2A).
-	return nil
+	return raft
 }
 
 // sendAppend sends an append RPC with new entries (if any) and the
 // current commit index to the given peer. Returns true if a message was sent.
 func (r *Raft) sendAppend(to uint64) bool {
 	// Your Code Here (2A).
+	m := pb.Message{
+		MsgType: pb.MessageType_MsgAppend,
+		From:    r.id,
+		To:      to,
+		Term:    r.Term,
+		LogTerm: 0,
+		Index:   None,
+		//Entries: r.RaftLog.entries,
+		Commit: r.RaftLog.committed,
+		Reject: false,
+	}
+	r.msgs = append(r.msgs, m)
 	return false
 }
 
 // sendHeartbeat sends a heartbeat RPC to the given peer.
 func (r *Raft) sendHeartbeat(to uint64) {
 	// Your Code Here (2A).
+	m := pb.Message{
+		MsgType: pb.MessageType_MsgHeartbeat,
+		From:    r.id,
+		To:      to,
+		Term:    r.Term,
+		LogTerm: 0,
+		Commit:  r.RaftLog.committed,
+		Reject:  false,
+	}
+	r.msgs = append(r.msgs, m)
 }
 
 // tick advances the internal logical clock by a single tick.
 func (r *Raft) tick() {
 	// Your Code Here (2A).
+	if r.State == StateLeader {
+		r.heartbeatElapsed++
+		if r.heartbeatElapsed == r.heartbeatTimeout {
+			r.Step(pb.Message{MsgType: pb.MessageType_MsgBeat, From: r.id})
+			r.heartbeatElapsed = 0
+		}
+	} else {
+		r.electionElapsed++
+		if r.electionElapsed == r.electionTimeout {
+			r.Step(pb.Message{MsgType: pb.MessageType_MsgHup, From: r.id})
+			r.electionElapsed = 0
+		}
+	}
 }
 
 // becomeFollower transform this peer's state to Follower
 func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	// Your Code Here (2A).
+	r.Term = term
+	r.State = StateFollower
+	r.Lead = lead
 }
 
 // becomeCandidate transform this peer's state to candidate
 func (r *Raft) becomeCandidate() {
 	// Your Code Here (2A).
+	r.Term++
+	r.State = StateCandidate
+	r.Lead = None
 }
 
 // becomeLeader transform this peer's state to leader
 func (r *Raft) becomeLeader() {
 	// Your Code Here (2A).
 	// NOTE: Leader should propose a noop entry on its term
+	r.State = StateLeader
+	r.Lead = r.id
 }
 
 // Step the entrance of handle message, see `MessageType`
 // on `eraftpb.proto` for what msgs should be handled
 func (r *Raft) Step(m pb.Message) error {
 	// Your Code Here (2A).
+	if m.Term > r.Term {
+		r.becomeFollower(m.Term, m.From)
+	} else if m.Term < r.Term {
+		// reject
+		return nil
+	}
 	switch r.State {
 	case StateFollower:
 	case StateCandidate:
@@ -221,6 +289,7 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 // handleHeartbeat handle Heartbeat RPC request
 func (r *Raft) handleHeartbeat(m pb.Message) {
 	// Your Code Here (2A).
+	r.electionElapsed = 0
 }
 
 // handleSnapshot handle Snapshot RPC request
